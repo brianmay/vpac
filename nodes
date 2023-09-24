@@ -1,0 +1,108 @@
+#/bin/sh
+set -e
+
+NODES="
+DB1
+DRAGON
+DRI
+GLOBALCITIES
+HQ
+LDAP1
+NS1
+RMIT
+SAM
+STG5
+STG7
+STG8
+SVN
+TANGO-M
+TSM
+VIC5
+WEXSTAN
+XCAT-TRAINING
+ZIMBRA"
+
+for i in $NODES
+do
+    if host "$i.in.vpac.org" > /dev/null
+    then
+        fqdn="$i.in.vpac.org"
+    elif host "$i.vpac.org" > /dev/null
+    then
+        fqdn="$i.vpac.org"
+    else
+        echo "Unable to find $i" 1>&2
+        exit 1
+    fi
+
+echo "--- $fqdn ---"
+ssh "root@$fqdn" 'sh' << EOF
+#!/bin/sh
+set -e
+if [ -f "/etc/adsm/dsm.sys" ]
+then
+    OPTFILE="/etc/adsm/dsm.opt"
+    TSMOPTFILE="/etc/adsm/dsm-tsm.opt"
+    SYSFILE="/etc/adsm/dsm.sys"
+elif [ -f /opt/tivoli/tsm/client/ba/bin/dsm.sys ]
+then
+    OPTFILE="/opt/tivoli/tsm/client/ba/bin/dsm.opt"
+    TSMOPTFILE="/opt/tivoli/tsm/client/ba/bin/dsm-tsm.opt"
+    SYSFILE="/opt/tivoli/tsm/client/ba/bin/dsm.sys"
+else
+    echo "Unable to find config" 1>&2
+    exit 1
+fi
+
+#cat "\$OPTFILE"
+oldschedlogname=\$(sed -n '/^SErvername\s\+TSMSERVER-STG1\s*$/I,/^$/s=^\s*SCHEDlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+olderrorlogname=\$(sed -n '/^SErvername\s\+TSMSERVER-STG1\s*$/I,/^$/s=^\s*ERRORlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+schedlogname=\$(sed -n '0,/^SErvername\s\+TSM\s*$/I! s=^\s*SCHEDlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+errorlogname=\$(sed -n '0,/^SErvername\s\+TSM\s*$/I! s=^\s*ERRORlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+if [ -z "\$oldschedlogname" ] || [ -z "\$olderrorlogname" ]
+then
+    # don't do anything for hosts without stg1 reference
+    exit 0
+fi
+newschedlogname="/var/log/tsm-test/dsmsched.log"
+newerrorlogname="/var/log/tsm-test/dsmerror.log"
+restart=""
+cp "\$SYSFILE" "\$SYSFILE.bak"
+if [ "\$schedlogname" != "\$newschedlogname" ]
+then
+    echo "moving \$schedlogname to \$newschedlogname"
+    sed '0,/^SErvername\s\+TSM$/I! s=\(SCHEDlogname\s*\).*\s*$=\1'"\$newschedlogname"'=I' < "\$SYSFILE" >  "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    [ "\$oldschedlogname" != "\$schedlogname" ] && echo rm "\$schedlogname" && rm -f "\$schedlogname"
+    restart="yes"
+fi
+if [ "\$errorlogname" != "\$newerrorlogname" ]
+then
+    echo "moving \$errorlogname to \$newerrorlogname"
+    sed '0,/^SErvername\s\+TSM$/I! s=\(ERRORlogname\s*\).*\s*$=\1'"\$newerrorlogname"'=I' < "\$SYSFILE" > "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    [ "\$olderrorlogname" != "\$errorlogname" ] && echo rm "\$errorlogname" && rm -f "\$errorlogname"
+    restart="yes"
+fi
+if [ -n "\$restart" ]
+then
+    if [ -f "/etc/init.d/tivsm-ba" ]
+    then
+        /etc/init.d/tivsm-ba stop || true
+        sleep 1
+        /etc/init.d/tivsm-ba start
+    elif [ -f "/etc/init.d/dsmcad" ]
+    then
+        /etc/init.d/dsmcad stop || true
+        sleep 1
+        /etc/init.d/dsmcad start
+    else
+        echo "Cannot restart dsmcad" 1>&2
+        exit 1
+    fi
+    dsmcad -optfile="\$TSMOPTFILE"
+    tail -f /var/log/tsm-test/*.log
+    exit 0
+fi
+EOF
+done

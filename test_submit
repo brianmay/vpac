@@ -1,0 +1,7 @@
+#!/usr/bin/env python
+import torque_submitfilter_new as sf
+
+username = "brian"
+print sf.get_user_disk_quota(username)
+project = sf.get_project(username)
+print sf.project_under_quota(project)

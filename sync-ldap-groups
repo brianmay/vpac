@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+from django.core.management import setup_environ
+from kgadmin.conf import settings
+setup_environ(settings)
+
+from placard.client import LDAPClient
+import ldap.modlist as modlist
+import ldap
+
+client = LDAPClient()
+for group in client.get_groups():
+	print group.cn
+
+	old_members = getattr(group, "member", [])
+	if not isinstance(old_members, list):
+		old_members = [ old_members ]
+
+	members = client.get_group_members("cn=%s"%group.cn)
+	members = [ i.dn for i in members ]
+
+	print len(old_members)
+	for i in old_members:
+		print i
+
+	print len(members)
+	for i in members:
+		print i
+
+	old = { 'member': old_members, }
+	new = { 'member': members, }
+
+	ldif = modlist.modifyModlist(old, new)
+        print ldif
+	if len(ldif)==0:
+		print
+	 	continue
+
+	try:
+		client.conn.modify_s(group.dn, ldif)
+	except ldap.ALREADY_EXISTS, e:
+		print e
+
+	print

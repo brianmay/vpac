@@ -1,0 +1,151 @@
+#/bin/sh
+set -e
+
+NODES="
+XCAT-TRAINING
+ZIMBRA
+"
+
+A="
+DB1
+DRAGON
+DRI
+GLOBALCITIES
+HQ
+LDAP1
+NS1
+RMIT
+SAM
+STG5
+STG7
+STG8
+SVN
+TANGO-M
+TSM
+VIC5
+WEXSTAN
+XCAT-TRAINING
+ZIMBRA
+"
+
+for i in $NODES
+do
+    if host "$i.in.vpac.org" > /dev/null
+    then
+        fqdn="$i.in.vpac.org"
+    elif host "$i.vpac.org" > /dev/null
+    then
+        fqdn="$i.vpac.org"
+    else
+        echo "Unable to find $i" 1>&2
+        exit 1
+    fi
+
+echo "--- $fqdn ---"
+ssh "root@$fqdn" 'sh' << EOF
+#!/bin/sh
+set -e
+set -x
+if [ -f "/etc/adsm/dsm.sys" ]
+then
+    OPTFILE="/etc/adsm/dsm.opt"
+    STG1_OPTFILE="/etc/adsm/dsm-stg1.opt"
+    TSM_OPTFILE="/etc/adsm/dsm-tsm.opt"
+    SYSFILE="/etc/adsm/dsm.sys"
+elif [ -f /opt/tivoli/tsm/client/ba/bin/dsm.sys ]
+then
+    OPTFILE="/opt/tivoli/tsm/client/ba/bin/dsm.opt"
+    STG1_OPTFILE="/opt/tivoli/tsm/client/ba/bin/dsm-stg1.opt"
+    TSM_OPTFILE="/opt/tivoli/tsm/client/ba/bin/dsm-tsm.opt"
+    SYSFILE="/opt/tivoli/tsm/client/ba/bin/dsm.sys"
+else
+    echo "Unable to find config" 1>&2
+    exit 1
+fi
+
+stg1_sched_log_name=\$(sed -n '/^SErvername\s\+TSMSERVER-STG1\s*$/I,/^$/s=^\s*SCHEDlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+stg1_error_log_name=\$(sed -n '/^SErvername\s\+TSMSERVER-STG1\s*$/I,/^$/s=^\s*ERRORlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+tsm_sched_log_name=\$(sed -n '0,/^SErvername\s\+TSM\s*$/I! s=^\s*SCHEDlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+tsm_error_log_name=\$(sed -n '0,/^SErvername\s\+TSM\s*$/I! s=^\s*ERRORlogname\s*\(.*\)\s*$=\1=pI' < "\$SYSFILE")
+if [ -z "\$stg1_sched_log_name" ] || [ -z "\$stg1_error_log_name" ]
+then
+    # don't do anything for hosts without stg1 reference
+    exit 0
+fi
+new_stg1_sched_log_name="/var/log/tsm-stg1/dsmsched.log"
+new_stg1_error_log_name="/var/log/tsm-stg1/dsmerror.log"
+new_tsm_sched_log_name="/var/log/tsm/dsmsched.log"
+new_tsm_error_log_name="/var/log/tsm/dsmerror.log"
+restart=""
+cp "\$SYSFILE" "\$SYSFILE.bak"
+if [ "\$stg1_sched_log_name" != "\$new_stg1_sched_log_name" ]
+then
+    echo "moving \$stg1_sched_log_name to \$new_stg1_sched_log_name"
+    sed '0,/^SErvername\s\+TSMSERVER-STG1$/I! s=\(SCHEDlogname\s*\).*\s*$=\1'"\$new_stg1_sched_log_name"'=I' < "\$SYSFILE" >  "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    restart="yes"
+fi
+if [ "\$stg1_error_log_name" != "\$new_stg1_error_log_name" ]
+then
+    echo "moving \$stg1_error_log_name to \$new_stg1_error_log_name"
+    sed '0,/^SErvername\s\+TSMSERVER-STG1$/I! s=\(ERRORlogname\s*\).*\s*$=\1'"\$new_stg1_error_log_name"'=I' < "\$SYSFILE" > "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    restart="yes"
+fi
+if [ "\$tsm_sched_log_name" != "\$new_tsm_sched_log_name" ]
+then
+    echo "moving \$tsm_sched_log_name to \$new_tsm_sched_log_name"
+    sed '0,/^SErvername\s\+TSM$/I! s=\(SCHEDlogname\s*\).*\s*$=\1'"\$new_tsm_sched_log_name"'=I' < "\$SYSFILE" >  "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    restart="yes"
+fi
+if [ "\$tsm_error_log_name" != "\$new_tsm_error_log_name" ]
+then
+    echo "moving \$tsm_error_log_name to \$new_tsm_error_log_name"
+    sed '0,/^SErvername\s\+TSM$/I! s=\(ERRORlogname\s*\).*\s*$=\1'"\$new_tsm_error_log_name"'=I' < "\$SYSFILE" > "\$SYSFILE.tmp"
+    mv "\$SYSFILE.tmp" "\$SYSFILE"
+    restart="yes"
+fi
+
+#if ! [ -f "\$STG1_OPTFILE" ] && [ -f "\$TSM_OPTFILE" ]
+#then
+    sed 's=^\(SErvername\s*\).*\s*$=\1TSMSERVER-STG1=I' < "\$OPTFILE" > "\$STG1_OPTFILE.tmp"
+    mv "\$STG1_OPTFILE.tmp" "\$STG1_OPTFILE"
+
+    cp "\$OPTFILE" "\$OPTFILE.bak"
+    sed 's=^\(SErvername\s*\).*\s*$=\1TSM=I' < "\$OPTFILE" > "\$OPTFILE.tmp"
+    mv "\$OPTFILE.tmp" "\$OPTFILE"
+
+    rm -f "\$TSM_OPTFILE"
+
+    restart="yes"
+#fi
+
+if [ -d "/var/log/tsm-test" ]
+then
+    mv /var/log/tsm-test /tmp
+fi
+
+if [ -n "\$restart" ]
+then
+    if [ -f "/etc/init.d/tivsm-ba" ]
+    then
+        /etc/init.d/tivsm-ba stop || true
+        sleep 1
+        /etc/init.d/tivsm-ba start
+    elif [ -f "/etc/init.d/dsmcad" ]
+    then
+        /etc/init.d/dsmcad stop || true
+        sleep 1
+        /etc/init.d/dsmcad start
+    else
+        echo "Cannot restart dsmcad" 1>&2
+        exit 1
+    fi
+    dsmcad -optfile="\$STG1_OPTFILE"
+    tail -f /var/log/tsm/*.log
+fi
+EOF
+
+    exit 1
+done
